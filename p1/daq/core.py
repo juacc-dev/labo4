@@ -24,7 +24,7 @@ def measure(
         # Set analog channel
         task.ai_channels.add_ai_voltage_chan(
             channel_name,
-            terminal_config=TerminalConfiguration.DIFFERENTIAL
+            terminal_config=TerminalConfiguration.DIFF
         )
 
         # Set sampling configuration
@@ -65,7 +65,7 @@ def measure(
 #     with nidaqmx.Task() as task:
 #         task.ai_channels.add_ai_voltage_chan(
 #             channel_name,
-#             terminal_config=TerminalConfiguration.DIFFERENTIAL
+#             terminal_config=TerminalConfiguration.DIFF
 #         )
 
 #         task.timing.cfg_samp_clk_timing(
