@@ -12,16 +12,10 @@ def fourier_transform(y, sampling_freq):
 
     cut = y.size // 2
 
-    xf = np.linspace(0, sampling_freq, cut)
+    xf = np.linspace(0, sampling_freq / 2, cut)
     yf = 2.0 / y.size * np.abs(yfft[:cut])
 
     return xf, yf
-
-
-def peaks(y):
-    x_peaks, y_peaks = scipy.signal.find_peaks(y, height=y[0])
-
-    return x_peaks, y_peaks
 
 
 f = 2
@@ -35,16 +29,17 @@ y = np.sin(2 * np.pi * f * t) * np.exp(-gamma * t)
 # plt.ylabel("Amplitud")
 # plt.show()
 
-sampling_freq = TMAX / N
+sampling_freq = max(t) / t.size
 
 xf, yf = fourier_transform(y, sampling_freq)
 
-x_peaks, _ = peaks(yf)
+peaks, _ = scipy.signal.find_peaks(yf, height=yf[0])
 
-print(f"Pico en {xf[x_peaks]}")
+print(f"Pico en {xf[peaks]}")
 
 plt.semilogx(xf, yf)
-plt.axvline(x=xf[x_peaks[0]])
+for peak in peaks:
+    plt.axvline(x=xf[peak])
 plt.xlabel("Frecuencia")
 plt.ylabel("Amplitud")
 plt.show()
