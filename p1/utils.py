@@ -1,8 +1,14 @@
 import pandas as pd
 import numpy as np
+# import nidaqmx
+# from nidaqmx.constants import AcquisitionType, TerminalConfiguration, \
+#     READ_ALL_AVAILABLE
+
 import scipy.fft
 import scipy.signal
 import matplotlib.pyplot as plt
+# from pathlib import Path
+
 
 plt.rcParams["font.family"] = "serif"
 plt.rcParams['axes.grid'] = True
@@ -10,10 +16,12 @@ plt.rcParams["figure.figsize"] = (9, 7)
 plt.rcParams['legend.loc'] = "best"
 plt.rcParams['legend.fontsize'] = 11
 
+# PATH = Path(
+#     r"C:\Users\publico\Documents\Laboratorio 4, 2025.2 - Grupo 6\datos 3-9\laton\en cero")
+
 
 def split_dataframe(df: pd.DataFrame):
-    if df is None:
-        return None, None, None, None
+    """Para separar un dataframe de datos en sus columnas."""
 
     cols = df.columns
     x = df[cols[0]]
@@ -24,22 +32,26 @@ def split_dataframe(df: pd.DataFrame):
     return x, xerr, y, yerr
 
 
-def fourier_transform(df: pd.DataFrame, skip_first=0):
+def fourier_transform(df, skip_first=0):
     x, _, y, _ = split_dataframe(df)
 
     sampling_freq = x.size / x.iat[-1]
+    cut = y.size // 2
 
-    yfft = scipy.fft.fft(y)
+    fft = np.fft.fft(y)
+    yfft = 2.0/len(y) * np.abs(fft)
 
     cut = y.size // 2
 
-    xf = np.linspace(0, sampling_freq, cut)
+    xf = np.arange(0, sampling_freq, 1 / (x.iat[-1] - x.iat[0]))
     yf = 2.0 / y.size * np.abs(yfft[:cut])
 
     return xf[skip_first:], yf[skip_first:]
 
 
 def low_pass_filter(xf, yf, freq):
+    """Para recortar el espectro."""
+
     cut = np.where(xf < freq)
 
     return xf[cut], yf[cut]
@@ -67,11 +79,9 @@ def find_highest_peaks(x, y, n, separation=0):
     return highest_peaks
 
 
-def plot_data(
-    df: pd.DataFrame,
-    ax=None,
-    **kwargs
-):
+def plot_data(df: pd.DataFrame, ax=None, **kwargs):
+    """Para plottear un dataframe."""
+
     x_axis, x_err, y_axis, y_err = split_dataframe(df)
 
     fig = None
@@ -89,12 +99,19 @@ def plot_data(
         **kwargs
     )
 
+    ax.fill_between(
+        x_axis,
+        y_axis - y_err,
+        y_axis + y_err,
+        label="Error",
+        color="green",
+        alpha=0.5
+    )
+
     return fig, ax
 
 
 def plot_fft(xf, yf, peaks, ax=None, **kwargs):
-    fig = None
-
     # ax may be passed. If not, create a new figure
     if ax is None:
         fig, ax = plt.subplots(
@@ -131,4 +148,26 @@ def plot_fft(xf, yf, peaks, ax=None, **kwargs):
     )
     ax.legend()
 
-    return fig, ax
+
+def where_start(df: pd.DataFrame, start_avg, tolerance):
+    y = df["Voltaje [V]"].to_numpy()
+
+    near_zero = np.abs(y[:start_avg]).max()
+    threshold = near_zero * tolerance
+    mask = np.abs(y) > threshold
+
+    first_index = np.flatnonzero(mask)
+
+    if first_index.size != 0:
+        return int(first_index[0])
+    else:
+        return None
+
+
+def where_stop(df, start, stop_after):
+    dt = float(df["Tiempo [s]"].iat[1] - df["Tiempo [s]"][0])
+
+    if stop_after != 0:
+        return int(start + stop_after / dt)
+    else:
+        return None
