@@ -1,0 +1,12 @@
+"(0) out_fine.csv"
+"(1) out_fine (extendido).csv"
+"(2) out_grueso (pre).csv"
+"(3) out_grueso (post).csv"
+"(5) in_grueso (post).csv"
+"(6) in_fine.csv"
+"(7) in_grueso (pre).csv"
+"(8) in_grueso (pre).csv"
+
+"(9) in supergrueso (completo).csv"
+"(10) out supergrueso (completo).csv"
+"(11) in supergrueso (cables iguales).csv"
