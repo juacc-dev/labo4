@@ -5,15 +5,27 @@ import pyvisa
 import logging
 import re
 import time
-from datetime import datetime
+import datetime
 from enum import Enum
 from pathlib import Path
 
-PATH = Path(r"")
+PATH = Path(r"C:\Users\publico\Documents\L4 G6 2025-2\data\2 - 19-11")
+
+# %%
+
+count = 5
 
 # %%
 
 logger = logging.getLogger("MAIN")
+
+
+def aggregate_df_dict(d, key, df):
+    if key not in d.keys():
+        d[key] = df
+
+    else:
+        d[ch] = pd.concat([d[key], df], ignore_index=True)
 
 
 def print_devices() -> None:
@@ -31,10 +43,12 @@ def print_dev_match(interface) -> None:
     ids = rm.list_resources()
 
     for id in ids:
-        if re.match(f"{interface}::.*::INSTR", id):
-            dev = rm.open_resource(id)
-
-            print(f"{id}  -->  {dev.query("*IDN?")}")
+        if re.match(f"{interface}.*INSTR", id):
+            try:
+                dev = rm.open_resource(id)
+            except Exception:
+                print("Timeout")
+            print(f"{id}  -->  {dev.query('*IDN?')}")
 
 
 class VisaInstrument:
@@ -139,6 +153,9 @@ class VisaInstrument:
                 cmd,
                 **kwargs
             )
+
+    def clear(self):
+        return self.write("*CLS")
 
     def opc(self) -> bool:
         return self.query("*OPC?") == "1"
@@ -466,6 +483,9 @@ class Agilent_34970A(VisaInstrument):
     Agilent's former Test and Measurement business has become Keysight
     Technologies."""
 
+    MISTERY_DELAY = 0.1
+    MISTERY_DELAY_EXTRA = 0.5
+
     class Vars(Enum):
         CURRENT_AC = "CURRENT:AC"
         CURRENT_DC = "CURRENT:DC"
@@ -479,6 +499,19 @@ class Agilent_34970A(VisaInstrument):
         VOLTAGE_AC = "VOLTAGE:AC"
         VOLTAGE_DC = "VOLTAGE:DC"
 
+    class Channel:
+        def __init__(
+            self,
+            number: int,
+            *,
+            variable=None,
+            conf_args=None,
+            delay: float = None,
+        ):
+            self.variable = variable
+            self.conf_args = conf_args
+            self.delay = delay
+
     def __init__(
         self,
         address,
@@ -486,57 +519,79 @@ class Agilent_34970A(VisaInstrument):
     ):
         super().__init__(address, **kwargs)
 
+        self.ch_list = {}
+
         self.write("FORMAT:READING:CHANNEL ON")
         self.write("FORMAT:READING:TIME ON")
         self.write("FORMAT:READING:UNIT OFF")
         self.write("FORMAT:READING:ALARM ON")
 
-        self._mux.write("FORMAT:READING:TIME:TYPE ABSOLUTE")
+        self.write("FORMAT:READING:TIME:TYPE ABSOLUTE")
+
+    def channel_str(self):
+        channels = self.ch_list.values()
+
+        return str([ch.channel for ch in channels])[1:-1]
+
+    def total_delay(self):
+        delay = 0
+
+        for ch in self.ch_list.values():
+            delay += ch.delay + Agilent_34970A.MISTERY_DELAY
+
+        return delay + Agilent_34970A.MISTERY_DELAY_EXTRA
+
+    def config_channel(
+        self,
+        ch: Channel,
+    ):
+        self.ch_list[ch.channel] = ch
+
+        if ch.variable is not None:
+            var = ch.variable.value if type(
+                ch.variable) is Agilent_34970A.Vars else ""
+
+            if ch.conf_args is None:
+                self.write(f"CONFIGURE:{var}")
+            else:
+                self.write(f"CONFIGURE:{var} {ch.conf_args},(@{ch.channel})")
+
+        if ch.delay is not None:
+            self.write(f"ROUTE:CHANNEL:DELAY {ch.delay},(@{ch.channel})")
 
     def config(
         self,
+        channels: list[Channel],
         *,
-        clear=False,
-        channels: list[int] = None,
-        delay: float = None,
-        scan_interval: float = None,
-        n_sweep: int = 1,
+        trigger_interval: float = None,
+        n_sweep: int = 1
     ):
-        if clear:
-            self.write("*CLS")
+        for ch in channels:
+            self.config_channel(ch)
 
-        if channels is not None:
-            self.write(f"ROUTE:SCAN (@{str(channels)[1:-1]})")
-            self.channels = channels
-
-        if scan_interval is not None:
-            self.write(f"ROUTE:CHANNEL:DELAY {delay}")
-
-        if scan_interval is not None:
-            self.write(f"TRIGGER:TIMER {scan_interval}")
+        if trigger_interval is not None:
+            self.write(f"TRIGGER:TIMER {trigger_interval}")
             self.write(f"TRIGGER:COUNT {n_sweep}")
 
-    # def get_time(self):
-    #     hour, min, sec = self.query_values("SYSTEM:TIME?")
-
-    #     return 3600 * float(hour) + 60 * float(min) + float(sec)
+        self.write(f"ROUTE:SCAN (@{self.channel_str()})")
 
     def parse_time(crap):
         time = [
-            datetime(
+            datetime.datetime(
                 int(x[0]), int(x[1]), int(x[2]), int(x[3]), int(x[4]),
                 int(x[5]), int((x[5] % 1)*1000000)
             ).timestamp()
             for x in np.transpose(crap)
         ]
 
-        return time
+        return np.array(time)
 
     def parse_read(self, data_raw):
+        n_values = 9
         data = np.transpose(
             np.reshape(
                 np.array(data_raw),
-                (len(self.channels), 8)
+                (len(self.channels), n_values)
             )
         )
 
@@ -550,39 +605,125 @@ class Agilent_34970A(VisaInstrument):
 
         return measurement, time, channel, alert
 
-    def one_scan(
+    def scan(
         self,
-        variable: Vars | str
     ):
-        # time.sleep(.5+(self.channelDelay+0.1)*len(self.channels))
-
-        var = variable.value if type(variable) is Agilent_34970A.Vars else ""
-
-        self.write(f"CONFIGURE:{var}")
-
         data_raw = self.query_values("READ?")
 
-        measurement, time, channel, alert = Agilent_34970A.parse_read(
-            data_raw
+        value, time, channel, alert = self.parse_read(data_raw)
+
+        dfs = {}
+
+        for ch, t, val, al in zip(channel, time, value, alert):
+            df = pd.DataFrame({
+                "Time": [t],
+                "Value": [val],
+                "Alert": [al]
+            })
+
+            dfs[int(ch)] = df
+
+        return dfs
+
+    def measure(
+        self,
+        *,
+        time_total,
+        time_step
+    ):
+        min_step = self.total_delay()
+
+        if time_step < min_step:
+            time_step = min_step
+            logger.warning(f"Usando time_step = {min_step:.2f} s")
+
+        n_points = int(time_total / time_step)
+
+        eta = datetime.datetime.fromtimestamp(
+            n_points * time_step + time.time()
         )
 
-        return data_raw, (measurement, time, channel, alert)
+        print(f"Total de puntos a medir: {n_points} (dt = {time_step:.2f} s)")
+        print(f"Se espera que finalice: {eta.hour}:{eta.minute} hs")
 
+        dfs = {}
+        t = time.time()
+
+        for i in range(n_points):
+            print(f"\x1b[2K{100 * i / n_points:.2f} %", end="")
+
+            dfs_tmp = self.scan()
+
+            for ch, df in dfs_tmp.items():
+                aggregate_df_dict(dfs, ch, df)
+
+            t = time.time() - t
+            time.sleep(t - time_step)
+
+        return dfs
+
+
+def plot_df(df, label=None):
+    pass
+
+
+CHANNEL_DELAY = 0.2
+
+Vars = Agilent_34970A.Vars
+Ch = Agilent_34970A.Channel
+
+K_COUPLE = {
+    "variable": Vars.TEMPERATURE,
+    "conf_args": "TC,K",
+    "delay": CHANNEL_DELAY,
+}
+
+J_COUPLE = {
+    "variable": Vars.TEMPERATURE,
+    "conf_args": "TC,J",
+    "delay": CHANNEL_DELAY,
+}
 
 # %%
 
-print_devices()
+mux = Agilent_34970A("ASRL3::INSTR")
 
 # %%
 
-mux = Agilent_34970A("")
 print(f"Conectado al multiplexor: {mux.query('*IDN?')}")
 
-mux.config(
-    clear=True,
-    channels=[101, 102],
-    delay=0.2,
-    scan_interval=1
+mux.clear()
+
+mux.config([
+    Ch(101, **K_COUPLE),
+    Ch(102, **K_COUPLE),
+    Ch(103, **J_COUPLE),
+    Ch(104, **J_COUPLE),
+    Ch(105, **J_COUPLE),
+    Ch(107, **J_COUPLE),
+])
+
+# %%
+
+dfs = mux.measure(
+    time_total=10,
+    time_step=0
 )
 
-print(mux.one_scan(Agilent_34970A.Vars.TEMPERATURE))
+path = PATH / f"{count}"
+path.mkdir(parents=True)
+
+for ch, df in dfs.items():
+    filename = f"canal {ch}.csv"
+    df.to_csv(path / filename)
+
+    print(f"Se guardó {filename} en {path.stem}")
+
+count += 1
+
+for ch, df in dfs.items():
+    plot_df(df, label=f"{ch}")
+
+# %%
+
+del mux
