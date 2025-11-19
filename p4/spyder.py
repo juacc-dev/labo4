@@ -667,10 +667,20 @@ def plot_df(df, label=None):
     pass
 
 
-CHANNEL_DELAY = 0.2
+# %%
 
 Vars = Agilent_34970A.Vars
 Ch = Agilent_34970A.Channel
+
+mux = Agilent_34970A("ASRL3::INSTR")
+
+print(f"Conectado al multiplexor: {mux.query('*IDN?')}")
+
+# %%
+
+CHANNEL_DELAY = 0.2
+TIME_TOTAL = 10
+TIME_STEP = 3
 
 K_COUPLE = {
     "variable": Vars.TEMPERATURE,
@@ -683,14 +693,6 @@ J_COUPLE = {
     "conf_args": "TC,J",
     "delay": CHANNEL_DELAY,
 }
-
-# %%
-
-mux = Agilent_34970A("ASRL3::INSTR")
-
-# %%
-
-print(f"Conectado al multiplexor: {mux.query('*IDN?')}")
 
 mux.clear()
 
@@ -706,8 +708,8 @@ mux.config([
 # %%
 
 dfs = mux.measure(
-    time_total=10,
-    time_step=0
+    time_total=TIME_TOTAL,
+    time_step=TIME_STEP
 )
 
 path = PATH / f"{count}"
@@ -721,8 +723,8 @@ for ch, df in dfs.items():
 
 count += 1
 
-for ch, df in dfs.items():
-    plot_df(df, label=f"{ch}")
+# for ch, df in dfs.items():
+#     plot_df(df, label=f"{ch}")
 
 # %%
 
