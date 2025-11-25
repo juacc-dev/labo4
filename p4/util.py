@@ -16,14 +16,14 @@ channels = [
     # "canal 107",
 ]
 
-dist = [
+dist = np.array([
     81.4,
     123.1,
     164.0,
     211.9,
     249.6,
-    410.5,
-]
+    # 410.5,
+])
 
 
 def setup_matplotlib():

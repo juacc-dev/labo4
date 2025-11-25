@@ -1,7 +1,7 @@
 import numpy as np
-# import pandas as pd
+import pandas as pd
 import matplotlib.pyplot as plt
-from util import setup_matplotlib, make_dfs, plot_dfs, dist
+from util import setup_matplotlib, make_dfs, dist
 import pylabo.plot as plot
 import pylabo.fit as fit
 
@@ -16,42 +16,45 @@ packs = {
     "enfriado":         make_dfs("./data/2 - 19-11/5 (enfriado)"),
 }
 
+# FAKE_ERROR = 0.1
 FREQ = 6e-3
 
 
-# for name, df in packs.items():
-#     fig, ax = plt.subplots(1, 1)
-#     plot_dfs(df, ax=ax, title=name)
-#     plt.show()
+def polynomial(x, *a):
+    s = 0
+    for n, a_n in enumerate(a):
+        s += a_n * x ** n
 
-def poly(x, a0, a1, a2):
-    return a0 + a1 * x + a2 * x ** 2
+    return s
 
 
 def make_model(t0, omega):
-    def _model(x, delta, c, a0, a1, a2):
-        t = x - t0
+    def _model(t, kx, ex, *a):
+        x_mov = t - t0
 
-        return np.abs(c) * np.cos(omega * x + delta) + poly(t, a0, a1, a2)
+        return np.exp(-ex) * np.cos(omega * x_mov - kx) + polynomial(x_mov, *a)
 
     return _model
 
 
 # fig, ax = plt.subplots(2, 1)
 
-ampl = []
-ampl_err = []
-deltas = []
-delta_err = []
+es = []
+es_err = []
+kxs = []
+kxs_err = []
 
 for ch, df in packs["osc"].items():
     omega = 2 * np.pi * FREQ
+    t0 = df["Time"][0]
 
     model = fit.Function(
-        make_model(df["Time"][0], omega),
-        ["delta", "c", "a0", "a1", "a2"]
+        make_model(t0, omega),
+        ["kx", "ex", "a0", "a1", "a2"]
     )
     c0 = df["Temperature"].max() - df["Temperature"].min()
+
+    # df["Error Temperature"] = FAKE_ERROR * df["Error Temperature"]
 
     fit_func = fit.fit(
         model,
@@ -59,43 +62,18 @@ for ch, df in packs["osc"].items():
         p0=[0, 1.5, df["Temperature"].mean(), 0, 0]
     )
 
-    # plot.datafit(
-    #     df,
-    #     fit_func,
-    #     datalabel=ch
-    # )
+    df_kx, c, *a = fit_func.param_val
+    kx_err, c_err, *a_err = fit_func.param_err
 
-    # plot.show()
-    delta, c, a0, a1, a2 = fit_func.param_val
-
-    t = df["Time"] - df["Time"][0]
-    # df["Temperature"] -= c * np.cos(omega * t + delta)
-    df["Temperature"] -= poly(t, a0, a1, a2)
-    # plot.data(df, label=ch, ax=ax, no_yerr=True)
-
-    model2 = fit.Function(
-        lambda x, a, d: a * np.cos(omega * x + d),
-        ["a", "d"]
-    )
-
-    fit_func2 = fit.fit(
-        model2,
-        df,
-        p0=[c, delta]
-    )
-
-    ampl.append(fit_func2.param_val[0])
-    ampl_err.append(fit_func2.param_err[0])
-    deltas.append(fit_func2.param_val[1])
-    delta_err.append(fit_func2.param_err[1])
-#     print(ch)
-#     print(f"  - a = {fit_func2.param_val[0]:.2e} +- {fit_func2.param_err[0]:.2e}")
-#     print(f"  - d = {fit_func2.param_val[1]:.2e} +- {fit_func2.param_err[1]:.2e}\n")
+    es.append(c)
+    es_err.append(c_err)
+    kxs.append(df_kx)
+    kxs_err.append(kx_err)
 
 #     plot.datafit(
 #         df,
-#         fit_func2,
-#         datalabel=ch,
+#         fit_func,
+#         # datalabel=ch,
 #         ax=ax,
 #         no_yerr=True
 #     )
@@ -110,16 +88,40 @@ for ch, df in packs["osc"].items():
 # plt.tight_layout()
 # plot.show()
 
-fig, ax = plt.subplots(2, 1, sharex=True)
+df_ex = pd.DataFrame({
+    "Distancia [mm]": dist,
+    "Error dist": 0,
+    "epsion x": es,
+    "Error ex": es_err
+})
 
-ax[0].errorbar(dist[:-1], ampl, yerr=ampl_err)
-ax[1].errorbar(dist[:-1], deltas, yerr=delta_err)
-ax[0].set(
-    ylabel="Amplitud [C]"
+df_kx = pd.DataFrame({
+    "Distancia [mm]": dist,
+    "Error dist": 0,
+    "kx": kxs,
+    "Error kx": kxs_err
+})
+
+fit_func_epsilon = fit.fit(
+    fit.funs.linear,
+    df_ex
 )
-ax[1].set(
-    xlabel="Distancia [mm]",
-    ylabel="Amplitud [C]"
+fit_func_k = fit.fit(
+    fit.funs.linear,
+    df_kx
 )
 
-plt.show()
+epsilon = fit_func_epsilon.param_val[0]
+err_epsilon = fit_func_epsilon.param_err[0]
+k = fit_func_k.param_val[0]
+err_k = fit_func_k.param_err[0]
+
+v = omega / k
+err_v = omega * err_k / k ** 2
+
+print(f"epsilon = {epsilon:.2e} +- {err_epsilon:.2e}")
+print(f"k = {k:.2e} +- {err_k:.2e}")
+print(f"v = {v:.2e} +- {err_v:.2e} mm/s")
+
+print(f"kappa_e = {omega / (2 * epsilon**2):.2f} +- {err_epsilon * omega / epsilon**3:.2f}")
+print(f"kappa_v = {v / (2 * omega):.2f} +- {err_v * v / omega:.2f}")
