@@ -13,19 +13,11 @@ PATH = Path(r"C:\Users\publico\Documents\L4 G6 2025-2\data\2 - 19-11")
 
 # %%
 
-count = 5
+count = 2
 
 # %%
 
 logger = logging.getLogger("MAIN")
-
-
-def aggregate_df_dict(d, key, df):
-    if key not in d.keys():
-        d[key] = df
-
-    else:
-        d[ch] = pd.concat([d[key], df], ignore_index=True)
 
 
 def print_devices() -> None:
@@ -204,6 +196,7 @@ class Tektronix_AFG3021B(VisaInstrument):
         self,
         ch=1,
         voltage=None,
+        offset=None,
         freq=None,
         shape: Funs | str = None,
         impedance=None
@@ -213,6 +206,9 @@ class Tektronix_AFG3021B(VisaInstrument):
         if voltage is not None:
             self.write(f"SOURce{ch}:VOLTage {voltage}")
 
+        if offset is not None:
+            self.write(f"SOURce{ch}:VOLTage:OFFSET {offset}")
+    
         if freq is not None:
             self.write(f"SOURce{ch}:FREQuency {freq}")
 
@@ -502,12 +498,13 @@ class Agilent_34970A(VisaInstrument):
     class Channel:
         def __init__(
             self,
-            number: int,
+            channel: int,
             *,
             variable=None,
             conf_args=None,
             delay: float = None,
         ):
+            self.channel = channel
             self.variable = variable
             self.conf_args = conf_args
             self.delay = delay
@@ -521,12 +518,6 @@ class Agilent_34970A(VisaInstrument):
 
         self.ch_list = {}
 
-        self.write("FORMAT:READING:CHANNEL ON")
-        self.write("FORMAT:READING:TIME ON")
-        self.write("FORMAT:READING:UNIT OFF")
-        self.write("FORMAT:READING:ALARM ON")
-
-        self.write("FORMAT:READING:TIME:TYPE ABSOLUTE")
 
     def channel_str(self):
         channels = self.ch_list.values()
@@ -534,7 +525,7 @@ class Agilent_34970A(VisaInstrument):
         return str([ch.channel for ch in channels])[1:-1]
 
     def total_delay(self):
-        delay = 0
+        delay = 0.0
 
         for ch in self.ch_list.values():
             delay += ch.delay + Agilent_34970A.MISTERY_DELAY
@@ -574,6 +565,13 @@ class Agilent_34970A(VisaInstrument):
             self.write(f"TRIGGER:COUNT {n_sweep}")
 
         self.write(f"ROUTE:SCAN (@{self.channel_str()})")
+        
+        self.write("FORMAT:READING:CHANNEL ON")
+        self.write("FORMAT:READING:TIME ON")
+        self.write("FORMAT:READING:UNIT OFF")
+        self.write("FORMAT:READING:ALARM ON")
+
+        self.write("FORMAT:READING:TIME:TYPE ABSOLUTE")
 
     def parse_time(crap):
         time = [
@@ -591,7 +589,7 @@ class Agilent_34970A(VisaInstrument):
         data = np.transpose(
             np.reshape(
                 np.array(data_raw),
-                (len(self.channels), n_values)
+                (len(self.ch_list.keys()), n_values)
             )
         )
 
@@ -625,46 +623,61 @@ class Agilent_34970A(VisaInstrument):
 
         return dfs
 
-    def measure(
-        self,
-        *,
-        time_total,
-        time_step
-    ):
-        min_step = self.total_delay()
 
-        if time_step < min_step:
-            time_step = min_step
-            logger.warning(f"Usando time_step = {min_step:.2f} s")
+# %%
 
-        n_points = int(time_total / time_step)
+def measure(
+    mux,
+    *,
+    time_total,
+    time_step
+):
+    min_step = mux.total_delay()
 
-        eta = datetime.datetime.fromtimestamp(
-            n_points * time_step + time.time()
-        )
+    if time_step < min_step:
+        time_step = min_step
+        logger.warning(f"Usando time_step = {min_step:.2f} s")
 
-        print(f"Total de puntos a medir: {n_points} (dt = {time_step:.2f} s)")
-        print(f"Se espera que finalice: {eta.hour}:{eta.minute} hs")
+    n_points = int(time_total / time_step)
 
-        dfs = {}
-        t = time.time()
+    eta = datetime.datetime.fromtimestamp(
+        n_points * time_step + time.time()
+    )
 
-        for i in range(n_points):
-            print(f"\x1b[2K{100 * i / n_points:.2f} %", end="")
+    print(f"Total de puntos a medir: {n_points} (dt = {time_step:.2f} s)")
+    print(f"Se espera que finalice: {eta.hour}:{eta.minute} hs")
 
-            dfs_tmp = self.scan()
+    dfs = {}
+    t0 = time.time()
+    t = time.time() - t0
 
-            for ch, df in dfs_tmp.items():
-                aggregate_df_dict(dfs, ch, df)
+    for i in range(n_points):
+        t0 = time.time()
 
-            t = time.time() - t
-            time.sleep(t - time_step)
+        dfs_tmp = mux.scan()
+        
+        for ch, df in dfs_tmp.items():
+            if ch not in dfs.keys():
+                dfs[ch] = df
 
-        return dfs
+            else:
+                dfs[ch] = pd.concat([dfs[ch], df], ignore_index=True)
+
+        t = time.time() - t0
+        sleep = time_step - t
+        time.sleep(sleep if sleep > 0 else 0)
+                
+        print(f"\x1b[2K{100 * (i+1) / n_points:.2f} %", end="")
+
+    return dfs
 
 
 def plot_df(df, label=None):
-    pass
+    t = df["Time"]
+    temp = df["Value"]
+    
+    plt.plot(t, temp, "o", label=label)
+
 
 
 # %%
@@ -673,14 +686,16 @@ Vars = Agilent_34970A.Vars
 Ch = Agilent_34970A.Channel
 
 mux = Agilent_34970A("ASRL3::INSTR")
+fungen = Tektronix_AFG3021B("USB0::0x0699::0x0346::C034165::INSTR")
 
 print(f"Conectado al multiplexor: {mux.query('*IDN?')}")
+print(f"Conectado al generador: {fungen.query('*IDN?')}")
 
 # %%
 
 CHANNEL_DELAY = 0.2
-TIME_TOTAL = 10
-TIME_STEP = 3
+TIME_TOTAL = 45 * 60
+TIME_STEP = 5
 
 K_COUPLE = {
     "variable": Vars.TEMPERATURE,
@@ -705,15 +720,30 @@ mux.config([
     Ch(107, **J_COUPLE),
 ])
 
+fungen.set(
+    freq=200,
+    voltage=5,
+    offset=2.5
+)
+
+fungen.write("SOURCE1:PWM:INTERNAL:FREQ 0.005")
+fungen.write("SOURCE1:PWM:INTERNAL:FUNCTION SIN")
+fungen.write("SOURCE1:PWM:DEVIATION:DCYCLE 50.0")
+
+fungen.write("SOURCE1:PWM:STATE ON")
+
+fungen.output("OFF")
+
 # %%
 
-dfs = mux.measure(
+dfs = measure(
+    mux,
     time_total=TIME_TOTAL,
     time_step=TIME_STEP
 )
 
-path = PATH / f"{count}"
-path.mkdir(parents=True)
+path = PATH / f"{count} (enfriado)"
+path.mkdir( parents=True, exist_ok=True)
 
 for ch, df in dfs.items():
     filename = f"canal {ch}.csv"
@@ -722,10 +752,11 @@ for ch, df in dfs.items():
     print(f"Se guardó {filename} en {path.stem}")
 
 count += 1
+#%%
+for ch, df in dfs.items():
+   plot_df(df, label=str(ch))
+   plt.legend()
 
-# for ch, df in dfs.items():
-#     plot_df(df, label=f"{ch}")
+plt.show()
 
 # %%
-
-del mux
