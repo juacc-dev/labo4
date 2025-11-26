@@ -18,6 +18,7 @@ packs = {
 
 # FAKE_ERROR = 0.2
 FREQ = 6e-3
+omega = 2 * np.pi * FREQ
 
 
 def polynomial(x, *a):
@@ -37,22 +38,13 @@ def make_model(t0, omega):
     return _model
 
 
-fig, ax = plt.subplots(2, 1)
-
-exs = []
-exs_err = []
-kxs = []
-kxs_err = []
-
-for ch, df in packs["osc"].items():
-    omega = 2 * np.pi * FREQ
+def find_fit(df):
     t0 = df["Time"][0]
 
     model = fit.Function(
         make_model(t0, omega),
         ["kx", "ex", "a0", "a1", "a2"]
     )
-    # c0 = df["Temperature"].max() - df["Temperature"].min()
 
     # df["Error Temperature"] = FAKE_ERROR * df["Error Temperature"]
 
@@ -64,6 +56,77 @@ for ch, df in packs["osc"].items():
 
     kx, ex, *a = fit_func.param_val
     kx_err, ex_err, *a_err = fit_func.param_err
+
+    return fit_func, ex, ex_err, kx, kx_err
+
+
+def calc_params(exs, exs_err, kxs, kxs_err, do_plot=True):
+    df_ex = pd.DataFrame({
+        "Distancia $x$ [mm]": dist,
+        "Error dist": 0,
+        r"$\epsilon x$": exs,
+        "Error ex": exs_err
+    })
+
+    df_kx = pd.DataFrame({
+        "Distancia $x$ [mm]": dist,
+        "Error dist": 0,
+        r"$kx$": kxs,
+        "Error kx": kxs_err
+    })
+
+    fit_func_epsilon = fit.fit(
+        fit.funs.linear,
+        df_ex
+    )
+    fit_func_k = fit.fit(
+        fit.funs.linear,
+        df_kx
+    )
+
+    epsilon = fit_func_epsilon.param_val[0]
+    err_epsilon = fit_func_epsilon.param_err[0]
+    k = fit_func_k.param_val[0]
+    err_k = fit_func_k.param_err[0]
+
+    if do_plot:
+        fig, ax = plt.subplots(
+            2,
+            2,
+            height_ratios=[2, 1],
+            sharex=True
+        )
+        plot.datafit(
+            df_ex,
+            fit_func_epsilon,
+            ax=[ax[0][0], ax[1][0]],
+            force_label=True
+        )
+
+        plot.datafit(
+            df_kx,
+            fit_func_k,
+            datalabel="k X",
+            ax=[ax[0][1], ax[1][1]],
+            force_label=True
+        )
+        ax[0][0].set_title("Decaimiento")
+        ax[0][1].set_title("Num. de onda")
+        plt.tight_layout()
+        plot.show()
+
+    return epsilon, err_epsilon, k, err_k
+
+
+fig, ax = plt.subplots(2, 1, height_ratios=[2, 1])
+
+exs = []
+exs_err = []
+kxs = []
+kxs_err = []
+
+for ch, df in packs["osc"].items():
+    fit_func, ex, ex_err, kx, kx_err = find_fit(df)
 
     exs.append(ex)
     exs_err.append(ex_err)
@@ -87,47 +150,9 @@ ax[1].set(
 plt.tight_layout()
 plot.show()
 
-df_ex = pd.DataFrame({
-    "Distancia [mm]": dist,
-    "Error dist": 0,
-    "epsion x": exs,
-    "Error ex": exs_err
-})
+kxs = np.unwrap(kxs)
 
-df_kx = pd.DataFrame({
-    "Distancia [mm]": dist,
-    "Error dist": 0,
-    "kx": np.unwrap(kxs),
-    "Error kx": kxs_err
-})
-
-fit_func_epsilon = fit.fit(
-    fit.funs.linear,
-    df_ex
-)
-fit_func_k = fit.fit(
-    fit.funs.linear,
-    df_kx
-)
-
-plot.datafit(
-    df_ex,
-    fit_func_epsilon,
-    datalabel="Epsilon X"
-)
-plot.show()
-
-plot.datafit(
-    df_kx,
-    fit_func_k,
-    datalabel="k X"
-)
-plot.show()
-
-epsilon = fit_func_epsilon.param_val[0]
-err_epsilon = fit_func_epsilon.param_err[0]
-k = fit_func_k.param_val[0]
-err_k = fit_func_k.param_err[0]
+epsilon, err_epsilon, k, err_k = calc_params(exs, exs_err, kxs, kxs_err)
 
 v = omega / k
 err_v = omega * err_k / k ** 2
